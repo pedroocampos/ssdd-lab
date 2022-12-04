@@ -4,6 +4,7 @@ import logging
 import time
 import hashlib
 import getpass
+import threading
 import Ice
 Ice.loadSlice('IceFlix.ice')
 import IceFlix
@@ -72,6 +73,26 @@ class Cliente(Ice.Application):
         nombre_usuario = input("Usuario: ")
         contrasena = getpass.getpass("Contraseña: ")
         contrasena = str(hashlib.sha256(contrasena.encode()).hexdigest)
+        self.pedir_token(nombre_usuario, contrasena)
+
+    def pedir_token(self, nombre_usuario, contrasena):
+        '''
+        Codigo que se ejecuta cada 2 minutos mientras que el usuario no cierre sesion
+        He usado threading.Timer para conseguir hacer otras cosas de forma concurrente
+        mientras esta funcion se ejecuta
+        '''
+        try:
+            if self.servicio_autenticacion is not None:
+                print("pidiendo token")
+                #self.token = self.servicio_autenticacion.refreshAuthorization(nombre_usuario, contrasena)
+        except IceFlix.Unauthorized:
+            logging.error("Ha ocurrido un error en la autenticación")
+            return
+
+        hilo = threading.Timer(120.0, self.pedir_token, args=(nombre_usuario, contrasena))
+        hilo.start()
+        if self.servicio_autenticacion is None:
+            hilo.cancel()
 
     def main(self):
         terminal = cmd_cliente.Terminal()
