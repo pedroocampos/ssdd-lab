@@ -16,7 +16,11 @@ class Terminal(cmd.Cmd):
     logging.basicConfig(level=logging.NOTSET)
 
     def cambiar_prompt(self):
-        if self.conectado():
+        if self.cliente.servicio_autenticacion is not None:
+            logging.info("Puedes cerrar sesión con el comando <cerrar_sesion>")
+            self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado y autenticado) Cliente)> " + Fore.RESET
+        elif self.conectado():
+            logging.info("Recuerda que puedes autenticarte con el comando <autenticar>")
             self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado) Cliente> " + Fore.RESET
         else:
             self.prompt = Style.BRIGHT +"<Cliente> " + Fore.RESET
@@ -38,6 +42,24 @@ class Terminal(cmd.Cmd):
             logging.error("No estás conectado <conectar>")
             return
         self.cliente.desconectar_servicio()
+        self.cambiar_prompt()
+
+    def do_autenticar(self, line):
+        "Para autenticarte en el sistema"
+        if not self.conectado():
+            logging.error("No estás conectado <conectar>")
+            return
+        elif self.cliente.servicio_autenticacion is not None:
+            logging.error("Ya tienes una sesión iniciada")
+            return
+        self.cliente.autenticar()
+        self.cambiar_prompt()
+
+    def do_cerrar_sesion(self, line):
+        "Para cerrar sesión"
+        if self.cliente.servicio_autenticacion is None:
+            logging.error("No has iniciado sesión")
+        self.cliente.cerrar_sesion()
         self.cambiar_prompt()
 
     def do_clear(self, line):
