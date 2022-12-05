@@ -62,6 +62,13 @@ class Terminal(cmd.Cmd):
         self.cliente.cerrar_sesion()
         self.cambiar_prompt()
 
+    def do_realizar_busqueda(self, line):
+        "Para buscar títulos en el catálogo"
+        if not self.conectado():
+            logging.error("No estás conectado <conectar>")
+            return
+        self.cliente.realizar_busqueda()
+
     def do_clear(self, line):
         "Deja la terminal como recién abierta"
         os.system("clear")
