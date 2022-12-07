@@ -98,14 +98,15 @@ class Cliente(Ice.Application):
         Llama al metodo para conectarte al servicio Authenticator y si la conexion
         ha ido bien te solicita las credenciales
         '''
-        self.conectarAutenticador()
+        #self.conectar_autenticador()
+        self.servicio_autenticacion = "servicio autenticador"
         if not self.servicio_autenticacion:
             logging.error("No se ha podido conectar con el autenticador")
             return
         nombre_usuario = input("Usuario: ")
         contrasena = getpass.getpass("Contraseña: ")
         contrasena = str(hashlib.sha256(contrasena.encode()).hexdigest)
-        self.pedir_token(nombre_usuario, contrasena)
+        return nombre_usuario, contrasena
 
     def pedir_token(self, nombre_usuario, contrasena):
         '''
@@ -135,14 +136,19 @@ class Cliente(Ice.Application):
 
         tipo_busqueda = input("¿Quiere buscar por nombre o tags? [nombre/tags] ")
         if tipo_busqueda == "nombre":
-            titulos = self.buscar_por_nombre()
+            media_ids = self.buscar_por_nombre()
         elif tipo_busqueda == "tags":
             if not self.servicio_autenticacion:
                 logging.error("No has iniciado sesión <autenticar>")
                 return
-            titulos = self.buscar_por_tags()
+            media_ids = self.buscar_por_tags()
         else:
             return
+
+        if not media_ids:
+            logging.error("No se han obtenido resultados")
+        else:
+            titulos = self.buscar_titulos_por_id(media_ids)
 
         self.resultados_busqueda.clear() # Elimino la anterior busqueda
         self.resultados_busqueda = dict((i+1,j) for i, j in enumerate(titulos))
@@ -153,39 +159,27 @@ class Cliente(Ice.Application):
         '''
         Para buscar un titulo en el catalogo por nombre
         '''
-        titulos = []
         nombre_titulo = input("Nombre del título que desea: ")
         termino_exacto = bool(input("¿Es el nombre exacto del título que desea? [si/no] ") == "si")
-        media_ids = self.servicio_catalogo.getTilesByName(nombre_titulo, termino_exacto).copy()
+        media_ids = self.servicio_catalogo.getTilesByName(nombre_titulo, termino_exacto)
 
-        if not media_ids:
-            logging.error("No se han obtenido resultados")
-        else:
-            titulos = self.buscar_titulos_por_id(media_ids)
-
-        return titulos
+        return media_ids
 
     def buscar_por_tags(self):
         '''
         Para buscar un titulo en el catalogo por tags
         '''
-        titulos = []
         tags = input("Introduzca una lista de tags, separados por un espacio ").split()
         incluir_tags = bool(input("¿Quiere incluir todos los tags en la búsqueda? [si/no]") == "si")
         if not incluir_tags:
             tags = input("Introduzca los tags que desea de la lista, separados por un espacio: " + str(tags) + " ").split()
         try:
-            media_ids = self.servicio_catalogo.getTilesByTags(tags, incluir_tags, self.token).copy()
+            media_ids = self.servicio_catalogo.getTilesByTags(tags, incluir_tags, self.token)
         except IceFlix.Unauthorized:
             logging.error("El token de autenticación no es correcto")
             return
 
-        if not media_ids:
-            logging.error("No se han obtenido resultados")
-        else:
-            titulos = self.buscar_titulos_por_id()
-
-        return titulos
+        return media_ids
 
     def buscar_titulos_por_id(self, ids):
         titulos = []
@@ -199,6 +193,75 @@ class Cliente(Ice.Application):
             logging.error("El servicio catálogo no se encuentra disponible")
         except IceFlix.Unauthorized:
             logging.error("El token de autenticación no es correcto")
+
+    def seleccionar_titulo(self):
+        '''
+        Imprime el resultado de la ultima busqueda y te pide que
+        selecciones un titulo
+        '''
+        print("Resultados de la última búsqueda:")
+        print(self.resultados_busqueda)
+        logging.info("Introduce el valor numérico que acompaña al título que deseas")
+        indice = input("Selecciona un título ")
+        self.titulo_seleccionado = self.resultados_busqueda[indice]
+
+         # ------------------ TAREAS ADMINISTRATIVAS -------------------------
+
+    def tareas_administrativas(self):
+        '''
+        Comprueba si un usuario es admin,
+        si lo es saca por pantalla el menu
+        correspondiente
+        '''
+        logging.info("Para acceder a estas tareas debes ser administrador")
+        token_admin = getpass.getpass("Token de administrador: ")
+        token_admin = str(hashlib.sha256(token_admin.encode()).hexdigest)
+        if not self.servicio_main.isAdmin(token_admin):
+            logging.error("No eres administrador")
+        else:
+            opcion_menu = self.menu_administrador()
+            if opcion_menu == 1:
+                self.añadir_usuario(token_admin)
+            elif opcion_menu == 2:
+                self.eliminar_usuario(token_admin)
+            elif opcion_menu == 6:
+                return
+
+    def menu_administrador(self):
+        '''
+        Para sacar por pantalla el menú de administrador
+        '''
+        print("\nSeleccione una de las siguientes opciones:\n1. Añadir usuario\n2. Eliminar usuario\n\
+            3. Renombrar fichero\n4. Subir fichero\n5. Eliminar fichero\n6. Salir")
+        opcion = input("Opción: ")
+        if not opcion.isdigit() or int(opcion) not in range(1, 6):
+            return
+        return int(opcion)
+
+    def añadir_usuario(self, token_admin):
+        '''
+        Para que un admin añada un usuario
+        '''
+        nombre_usuario, contrasena = self.autenticar()
+        try:
+            self.servicio_autenticacion.addUser(nombre_usuario, contrasena, token_admin)
+        except IceFlix.TemporaryUnavailable:
+            logging.error("El servicio de autenticación no se encuentra disponible")
+        except IceFlix.Unauthorized:
+            logging.error("Error al añadir el usuario")
+
+    def eliminar_usuario(self, token_admin):
+        '''
+        Para que un admin elimine un usuario
+        '''
+        self.conectar_autenticador()
+        nombre_usuario = input("Usuario: ")
+        try:
+            self.servicio_autenticacion.removeUser(nombre_usuario, token_admin)
+        except IceFlix.TemporaryUnavailable:
+            logging.error("El servicio de autenticación no se encuentra disponible")
+        except IceFlix.Unauthorized:
+            logging.error("Error al eliminar el usuario")
 
     def main(self):
         terminal = cmd_cliente.Terminal()

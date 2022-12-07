@@ -25,6 +25,18 @@ class Terminal(cmd.Cmd):
         else:
             self.prompt = Style.BRIGHT +"<Cliente> " + Fore.RESET
 
+    def do_clear(self, line):
+        "Deja la terminal como recién abierta"
+        os.system("clear")
+        print(self.intro)
+
+    def do_exit(self, line):
+        "Para salir de la terminal"
+        os._exit(os.EX_OK)
+
+    def default(self, line):
+        logging.error("Orden no encontrada")
+
     def conectado(self):
         return self.cliente.servicio_main is not None
 
@@ -52,7 +64,8 @@ class Terminal(cmd.Cmd):
         elif self.cliente.servicio_autenticacion is not None:
             logging.error("Ya tienes una sesión iniciada")
             return
-        self.cliente.autenticar()
+        nombre_usuario, contrasena = self.cliente.autenticar()
+        self.cliente.pedir_token(nombre_usuario, contrasena)
         self.cambiar_prompt()
 
     def do_cerrar_sesion(self, line):
@@ -69,14 +82,16 @@ class Terminal(cmd.Cmd):
             return
         self.cliente.realizar_busqueda()
 
-    def do_clear(self, line):
-        "Deja la terminal como recién abierta"
-        os.system("clear")
-        print(self.intro)
+    def do_seleccionar_titulo(self, line):
+        "Para seleccionar uno de los títulos de la última búsqueda realizada"
+        if not self.cliente.resultados_busqueda:
+            logging.error("Primero debes realizar una búsqueda <realizar_busqueda>")
+            return
+        self.cliente.seleccionar_titulo()
 
-    def do_exit(self, line):
-        "Para salir de la terminal"
-        os._exit(os.EX_OK)
-
-    def default(self, line):
-        logging.error("Orden no encontrada")
+    def do_tareas_administrativas(self, line):
+        "Para acceder a las tareas administrativas"
+        if not self.conectado():
+            logging.error("No estás conectado <conectar>")
+            return
+        self.cliente.tareas_administrativas()
