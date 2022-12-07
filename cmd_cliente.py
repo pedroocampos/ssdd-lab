@@ -15,6 +15,9 @@ class Terminal(cmd.Cmd):
 
     logging.basicConfig(level=logging.NOTSET)
 
+    def conectado(self):
+        return self.cliente.servicio_main is not None
+
     def cambiar_prompt(self):
         if self.cliente.servicio_autenticacion is not None:
             logging.info("Puedes cerrar sesión con el comando <cerrar_sesion>")
@@ -36,9 +39,6 @@ class Terminal(cmd.Cmd):
 
     def default(self, line):
         logging.error("Orden no encontrada")
-
-    def conectado(self):
-        return self.cliente.servicio_main is not None
 
     def do_conectar(self, line):
         "Para conectarte al servicio Main"

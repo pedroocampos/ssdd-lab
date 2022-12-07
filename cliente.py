@@ -224,6 +224,10 @@ class Cliente(Ice.Application):
                 self.añadir_usuario(token_admin)
             elif opcion_menu == 2:
                 self.eliminar_usuario(token_admin)
+            elif opcion_menu == 3:
+                self.renombrar_archivo(token_admin)
+            elif opcion_menu == 5:
+                self.eliminar_archivo(token_admin)
             elif opcion_menu == 6:
                 return
 
@@ -263,9 +267,51 @@ class Cliente(Ice.Application):
         except IceFlix.Unauthorized:
             logging.error("Error al eliminar el usuario")
 
-    def main(self):
+    def renombrar_archivo(self, token_admin):
+        '''
+        Para que un admin renombre un archivo
+        '''
+        if not self.titulo_seleccionado:
+            logging.error("Primero debes seleccionar un título <seleccionar_titulo>")
+            return
+        try:
+            print("Titulo seleccionado " + self.titulo_seleccionado)
+            media_id = self.servicio_catalogo.getTilesByName(self.titulo_seleccionado, True)
+            nuevo_nombre = input("Nuevo nombre del archivo ")
+            self.servicio_catalogo.renameTile(media_id, nuevo_nombre, token_admin)
+        except IceFlix.WrongMediaId:
+            logging.error("Ha habido un error con el id")
+        except IceFlix.Unauthorized:
+            logging.error("Error al renombrar el fichero")
+
+    def eliminar_archivo(self):
+        '''
+        Para que un admin elimine un archivo
+        '''
+        if not self.titulo_seleccionado:
+            logging.error("Primero debes seleccionar un título <seleccionar_titulo>")
+            return
+        self.conectar_servicio_ficheros()
+        if not self.servicio_ficheros:
+            return
+        try:
+            print("Titulo seleccionado " + self.titulo_seleccionado)
+            media_id = self.servicio_catalogo.getTilesByName(self.titulo_seleccionado, True)
+            self.servicio_catalogo.removeMedia(media_id, self.servicio_ficheros)
+        except IceFlix.WrongMediaId:
+            logging.error("Ha habido un error con el id")
+        except IceFlix.Unauthorized:
+            logging.error("Error al renombrar el fichero")
+
+    def run(self, argv):
+        '''
+        Definicion del metodo run de Ice.Application
+        '''
+
         terminal = cmd_cliente.Terminal()
         terminal.cmdloop()
+
+        return 0
 
 if __name__ == "__main__":
     Cliente().main()
