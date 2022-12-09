@@ -48,7 +48,7 @@ class Cliente(Ice.Application):
     servicio_catalogo = None
     servicio_ficheros = None
     token = None
-    resultados_busqueda = {}
+    resultados_busqueda = []
     titulo_seleccionado = None
 
     logging.basicConfig(level=logging.NOTSET)
@@ -58,13 +58,11 @@ class Cliente(Ice.Application):
         Para conectarte al servicio Main
         '''
         intentos = 0
-        proxy_main = self.communicator().stringToProxy("proxy")
-        if not proxy_main:
-            logging.error("Proxy inválido")
+        main_proxy = self.communicator().propertyToProxy("main_prx")
         while intentos != INTENTOS_RECONEXION:
             try:
                 intentos += 1
-                self.servicio_main = IceFlix.Main.checkedCast(proxy_main)
+                self.servicio_main = IceFlix.MainPrx.checkedCast(main_proxy)
             except Ice.Exception:
                 logging.error("Proxy inválido. Intentando reconectar...")
                 self.servicio_main = None
@@ -134,6 +132,7 @@ class Cliente(Ice.Application):
         '''
         self.servicio_autenticacion = None
         self.servicio_catalogo = None
+        self.servicio_ficheros = None
         self.token = None
 
     def autenticar(self):
@@ -141,14 +140,13 @@ class Cliente(Ice.Application):
         Llama al metodo para conectarte al servicio Authenticator y si la conexion
         ha ido bien te solicita las credenciales
         '''
-        #self.conectar_autenticador()
-        self.servicio_autenticacion = "servicio autenticador"
+        self.conectar_autenticador()
         if not self.servicio_autenticacion:
             logging.error("No se ha podido conectar con el autenticador")
             return
         nombre_usuario = input("Usuario: ")
         contrasena = getpass.getpass("Contraseña: ")
-        contrasena = str(hashlib.sha256(contrasena.encode()).hexdigest)
+        contrasena = str(hashlib.sha256(contrasena.encode()).hexdigest())
         return nombre_usuario, contrasena
 
     def pedir_token(self, nombre_usuario, contrasena):
@@ -160,8 +158,7 @@ class Cliente(Ice.Application):
 
         try:
             if self.servicio_autenticacion is not None:
-                print("pidiendo token")
-                #self.token = self.servicio_autenticacion.refreshAuthorization(nombre_usuario, contrasena)
+                self.token = self.servicio_autenticacion.refreshAuthorization(nombre_usuario, contrasena)
         except IceFlix.Unauthorized:
             logging.error("Ha ocurrido un error en la autenticación")
             self.token = None
@@ -177,7 +174,6 @@ class Cliente(Ice.Application):
         Método que contiene todo el proceso para realizar una búsqueda
         '''
         self.conectar_catalogo()
-        #self.servicio_catalogo = "servicio_catalogo"
         if not self.servicio_catalogo:
             logging.error("No se ha podido conectar con el catálogo")
             return
@@ -196,19 +192,26 @@ class Cliente(Ice.Application):
         if not media_ids:
             logging.error("No se han obtenido resultados")
         else:
-            titulos = self.buscar_titulos_por_id(media_ids)
+            self.resultados_busqueda.clear()
+            self.resultados_busqueda = self.buscar_titulos_por_id(media_ids)
+            self.listar_titulos()
 
-        self.resultados_busqueda.clear() # Elimino la anterior busqueda
-        self.resultados_busqueda = dict((i+1,j) for i, j in enumerate(titulos))
-        print("Resultados:")
-        print(self.resultados_busqueda)
+    def listar_titulos(self):
+        '''
+        Metodo para sacar por pantalla
+        el titulo y tags de los titulos
+        '''
+        aux = 0
+        for titulo in self.resultados_busqueda:
+            print(str(aux) + ". " + titulo.info.name + " " + str(titulo.info.tags))
+            aux += 1
 
     def buscar_por_nombre(self):
         '''
         Para buscar un titulo en el catalogo por nombre
         '''
         nombre_titulo = input("Nombre del título que desea: ")
-        termino_exacto = bool(input("¿Es el nombre exacto del título que desea? [si/no] ") == "si")
+        termino_exacto = bool(input("¿Quieres que la búsqueda sea exacta? [si/no] ") == "si")
         media_ids = self.servicio_catalogo.getTilesByName(nombre_titulo, termino_exacto)
 
         return media_ids
@@ -218,7 +221,7 @@ class Cliente(Ice.Application):
         Para buscar un titulo en el catalogo por tags
         '''
         tags = input("Introduzca una lista de tags, separados por un espacio ").split()
-        incluir_tags = bool(input("¿Quiere incluir todos los tags en la búsqueda? [si/no]") == "si")
+        incluir_tags = bool(input("¿Quiere incluir todos los tags en la búsqueda? [si/no] ") == "si")
         if not incluir_tags:
             tags = input("Introduzca los tags que desea de la lista, separados por un espacio: " + str(tags) + " ").split()
         try:
@@ -252,10 +255,33 @@ class Cliente(Ice.Application):
         selecciones un titulo
         '''
         print("Resultados de la última búsqueda:")
-        print(self.resultados_busqueda)
+        self.listarTitulos()
         logging.info("Introduce el valor numérico que acompaña al título que deseas")
         indice = input("Selecciona un título ")
         self.titulo_seleccionado = self.resultados_busqueda[indice]
+        editar_tags = bool(input("¿Quieres editar los tags de " + self.titulo_seleccionado.info.name + "? [si/no] ") == "si")
+        if editar_tags:
+            self.editar_tags()
+            logging.info("Tags actualizados")
+
+    def editar_tags(self):
+        '''
+        Metodo para añadir o eliminar tags de un titulo
+        '''
+        try:
+            modo_edicion = input("¿Quiere añadir o eliminar tags? [añadir/eliminar]")
+            if modo_edicion == "añadir":
+                tags = input("Introduzca una lista de tags, separados por un espacio ").split()
+                self.servicio_catalogo.addTags(self.titulo_seleccionado.mediaId, tags, self.token)
+            elif modo_edicion == "eliminar":
+                print("Tags de " + self.titulo_seleccionado.info.name + " " + str(self.titulo_seleccionado.info.tags))
+                tags = input("Introduzca los tags que desea eliminar de la lista, separados por un espacio: ").split()
+                self.servicio_catalogo.removeTags(self.titulo_seleccionado.mediaId, tags, self.token)
+        except IceFlix.WrongMediaId:
+            logging.error("Ha habido un error con el id")
+        except IceFlix.Unauthorized:
+            logging.error("No estás autorizado para realizar esta acción")
+
 
     def descargar_archivo(self):
         '''
@@ -265,9 +291,8 @@ class Cliente(Ice.Application):
         if not self.servicio_ficheros:
             return
         try:
-            print("Titulo seleccionado " + self.titulo_seleccionado)
-            media_id = self.servicio_catalogo.getTilesByName(self.titulo_seleccionado, True)
-            file_handler = self.servicio_ficheros.openFile(media_id, self.token)
+            print("Titulo seleccionado " + self.titulo_seleccionado.info.name)
+            file_handler = self.servicio_ficheros.openFile(self.titulo_seleccionado.mediaId, self.token)
 
             while True:
                 datos = file_handler.receive(TAM_BLOQUE, self.token)
@@ -281,7 +306,7 @@ class Cliente(Ice.Application):
             logging.error("No estás autorizado para realizar esta acción")
 
 
-     # ------------------ TAREAS ADMINISTRATIVAS -------------------------
+    # ------------------ TAREAS ADMINISTRATIVAS -------------------------
 
     def tareas_administrativas(self):
         '''
@@ -291,8 +316,9 @@ class Cliente(Ice.Application):
         '''
         logging.info("Para acceder a estas tareas debes ser administrador")
         token_admin = getpass.getpass("Token de administrador: ")
-        token_admin = str(hashlib.sha256(token_admin.encode()).hexdigest)
-        if not self.servicio_main.isAdmin(token_admin):
+        token_admin = str(token_admin)
+        self.conectar_autenticador()
+        if not self.servicio_autenticacion.isAdmin(token_admin):
             logging.error("No eres administrador")
         else:
             opcion_menu = self.menu_administrador()
@@ -313,8 +339,13 @@ class Cliente(Ice.Application):
         '''
         Para sacar por pantalla el menú de administrador
         '''
-        print("\nSeleccione una de las siguientes opciones:\n1. Añadir usuario\n2. Eliminar usuario\n\
-            3. Renombrar fichero\n4. Subir fichero\n5. Eliminar fichero\n6. Salir")
+        print("Seleccione una de las siguientes opciones:")
+        print("1. Añadir usuario")
+        print("2. Eliminar usuario")
+        print("3. Renombrar archivo")
+        print("4. Subir fichero")
+        print("5. Eliminar fichero")
+        print("6. Salir")
         opcion = input("Opción: ")
         if not opcion.isdigit() or int(opcion) not in range(1, 6):
             return
@@ -353,10 +384,9 @@ class Cliente(Ice.Application):
             logging.error("Primero debes seleccionar un título <seleccionar_titulo>")
             return
         try:
-            print("Titulo seleccionado " + self.titulo_seleccionado)
-            media_id = self.servicio_catalogo.getTilesByName(self.titulo_seleccionado, True)
+            print("Titulo seleccionado " + self.titulo_seleccionado.info.name)
             nuevo_nombre = input("Nuevo nombre del archivo ")
-            self.servicio_catalogo.renameTile(media_id, nuevo_nombre, token_admin)
+            self.servicio_catalogo.renameTile(self.titulo_seleccionado.mediaId, nuevo_nombre, token_admin)
         except IceFlix.WrongMediaId:
             logging.error("Ha habido un error con el id")
         except IceFlix.Unauthorized:
@@ -383,9 +413,8 @@ class Cliente(Ice.Application):
         if not self.servicio_ficheros:
             return
         try:
-            print("Titulo seleccionado " + self.titulo_seleccionado)
-            media_id = self.servicio_catalogo.getTilesByName(self.titulo_seleccionado, True)
-            self.servicio_catalogo.removeMedia(media_id, self.servicio_ficheros)
+            print("Titulo seleccionado " + self.titulo_seleccionado.info.name)
+            self.servicio_catalogo.removeMedia(self.titulo_seleccionado.mediaId, self.servicio_ficheros)
         except IceFlix.WrongMediaId:
             logging.error("Ha habido un error con el id")
         except IceFlix.Unauthorized:
@@ -395,7 +424,6 @@ class Cliente(Ice.Application):
         '''
         Definicion del metodo run de Ice.Application
         '''
-
         terminal = cmd_cliente.Terminal()
         terminal.cmdloop()
 
