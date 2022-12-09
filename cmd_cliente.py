@@ -71,7 +71,7 @@ class Terminal(cmd.Cmd):
         if not self.conectado():
             logging.error("No estás conectado <conectar>")
             return
-        if self.cliente.servicio_autenticacion:
+        if self.cliente.token:
             logging.error("Ya tienes una sesión iniciada")
             return
         nombre_usuario, contrasena = self.cliente.autenticar()
@@ -80,7 +80,7 @@ class Terminal(cmd.Cmd):
 
     def do_cerrar_sesion(self, line):
         "Para cerrar sesión"
-        if self.cliente.servicio_autenticacion is None:
+        if not self.cliente.token:
             logging.error("No has iniciado sesión")
         self.cliente.cerrar_sesion()
         self.cambiar_prompt()
@@ -94,7 +94,7 @@ class Terminal(cmd.Cmd):
 
     def do_seleccionar_titulo(self, line):
         "Para seleccionar uno de los títulos de la última búsqueda realizada"
-        if not self.servicio_autenticacion:
+        if not self.cliente.token:
             logging.error("Debes iniciar sesión <autenticar>")
             return
         if not self.cliente.resultados_busqueda:
@@ -107,7 +107,7 @@ class Terminal(cmd.Cmd):
         if not self.conectado():
             logging.error("No estás conectado <conectar>")
             return
-        if not self.cliente.servicio_autenticacion:
+        if not self.cliente.token:
             logging.error("Debes iniciar sesión <autenticar>")
         if not self.cliente.titulo_seleccionado:
             logging.error("Primero debes seleccionar un título <seleccionar_titulo>")

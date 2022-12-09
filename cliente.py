@@ -2,6 +2,8 @@
 
 #pylint: disable=C0413
 #pylint: disable=E0401
+#pylint: disable=C0301
+
 import logging
 import time
 import getpass
@@ -26,9 +28,9 @@ class FileUploaderI(IceFlix.FileUploader):
 
     def receive(self, size, current=None):
         '''
-        Método que lee una cantidad de bytes
+        Método que lee una cantidad de bytes del fichero
         '''
-        self.contenido_fichero.read(size)
+        return self.contenido_fichero.read(size)
 
     def close(self, current=None):
         '''
@@ -74,35 +76,33 @@ class Cliente(Ice.Application):
         '''
         Para conectarte al servicio Authenticator
         '''
-        if not self.servicio_autenticacion:
-            intentos = 0
-            while intentos != INTENTOS_RECONEXION:
-                try:
-                    intentos += 1
-                    self.servicio_autenticacion = self.servicio_main.getAuthenticator()
-                except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                    logging.error("Proxy inválido. Intentando reconectar...")
-                    self.servicio_autenticacion = None
-                    time.sleep(5)
-                    continue
-                break
+        intentos = 0
+        while intentos != INTENTOS_RECONEXION:
+            try:
+                intentos += 1
+                self.servicio_autenticacion = self.servicio_main.getAuthenticator()
+            except (IceFlix.TemporaryUnavailable, Ice.Exception):
+                logging.error("Proxy inválido. Intentando reconectar...")
+                self.servicio_autenticacion = None
+                time.sleep(5)
+                continue
+            break
 
     def conectar_catalogo(self):
         '''
         Para conectarte al servicio Catalogo
         '''
-        if not self.servicio_catalogo:
-            intentos = 0
-            while intentos != INTENTOS_RECONEXION:
-                try:
-                    intentos += 1
-                    self.servicio_catalogo = self.servicio_main.getCatalog()
-                except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                    logging.error("Proxy inválido. Intentando reconectar...")
-                    self.servicio_catalogo = None
-                    time.sleep(5)
-                    continue
-                break
+        intentos = 0
+        while intentos != INTENTOS_RECONEXION:
+            try:
+                intentos += 1
+                self.servicio_catalogo = self.servicio_main.getCatalog()
+            except (IceFlix.TemporaryUnavailable, Ice.Exception):
+                logging.error("Proxy inválido. Intentando reconectar...")
+                self.servicio_catalogo = None
+                time.sleep(5)
+                continue
+            break
 
     def conectar_servicio_ficheros(self):
         '''
@@ -134,6 +134,7 @@ class Cliente(Ice.Application):
         self.servicio_catalogo = None
         self.servicio_ficheros = None
         self.token = None
+        self.resultados_busqueda.clear()
 
     def autenticar(self):
         '''
@@ -155,9 +156,8 @@ class Cliente(Ice.Application):
         He usado threading.Timer para conseguir hacer otras cosas de forma concurrente
         mientras esta funcion se ejecuta
         '''
-
         try:
-            if self.servicio_autenticacion is not None:
+            if not self.token:
                 self.token = self.servicio_autenticacion.refreshAuthorization(nombre_usuario, contrasena)
         except IceFlix.Unauthorized:
             logging.error("Ha ocurrido un error en la autenticación")
@@ -182,12 +182,10 @@ class Cliente(Ice.Application):
         if tipo_busqueda == "nombre":
             media_ids = self.buscar_por_nombre()
         elif tipo_busqueda == "tags":
-            if not self.servicio_autenticacion:
+            if not self.token:
                 logging.error("No has iniciado sesión <autenticar>")
                 return
             media_ids = self.buscar_por_tags()
-        else:
-            return
 
         if not media_ids:
             logging.error("No se han obtenido resultados")
@@ -221,9 +219,7 @@ class Cliente(Ice.Application):
         Para buscar un titulo en el catalogo por tags
         '''
         tags = input("Introduzca una lista de tags, separados por un espacio ").split()
-        incluir_tags = bool(input("¿Quiere incluir todos los tags en la búsqueda? [si/no] ") == "si")
-        if not incluir_tags:
-            tags = input("Introduzca los tags que desea de la lista, separados por un espacio: " + str(tags) + " ").split()
+        incluir_tags = bool(input("¿Quieres que la búsqueda sea exacta? [si/no] ") == "si")
         try:
             media_ids = self.servicio_catalogo.getTilesByTags(tags, incluir_tags, self.token)
         except IceFlix.Unauthorized:
@@ -255,9 +251,9 @@ class Cliente(Ice.Application):
         selecciones un titulo
         '''
         print("Resultados de la última búsqueda:")
-        self.listarTitulos()
+        self.listar_titulos()
         logging.info("Introduce el valor numérico que acompaña al título que deseas")
-        indice = input("Selecciona un título ")
+        indice = int(input("Selecciona un título "))
         self.titulo_seleccionado = self.resultados_busqueda[indice]
         editar_tags = bool(input("¿Quieres editar los tags de " + self.titulo_seleccionado.info.name + "? [si/no] ") == "si")
         if editar_tags:
@@ -315,12 +311,12 @@ class Cliente(Ice.Application):
         correspondiente
         '''
         logging.info("Para acceder a estas tareas debes ser administrador")
-        token_admin = getpass.getpass("Token de administrador: ")
-        token_admin = str(token_admin)
+        token_admin = str(getpass.getpass("Token de administrador: "))
         self.conectar_autenticador()
         if not self.servicio_autenticacion.isAdmin(token_admin):
             logging.error("No eres administrador")
         else:
+            self.token = token_admin
             opcion_menu = self.menu_administrador()
             if opcion_menu == 1:
                 self.añadir_usuario(token_admin)
@@ -333,6 +329,7 @@ class Cliente(Ice.Application):
             elif opcion_menu == 5:
                 self.eliminar_fichero(token_admin)
             elif opcion_menu == 6:
+                self.cerrar_sesion()
                 return
 
     def menu_administrador(self):
@@ -381,8 +378,9 @@ class Cliente(Ice.Application):
         Para que un admin renombre un archivo
         '''
         if not self.titulo_seleccionado:
-            logging.error("Primero debes seleccionar un título <seleccionar_titulo>")
-            return
+            logging.error("No hay seleccionado ningún título")
+            self.realizar_busqueda()
+            self.seleccionar_titulo()
         try:
             print("Titulo seleccionado " + self.titulo_seleccionado.info.name)
             nuevo_nombre = input("Nuevo nombre del archivo ")
@@ -396,19 +394,34 @@ class Cliente(Ice.Application):
         '''
         Método que crea el proxy del FileUploader
         '''
+        self.conectar_servicio_ficheros()
+        if not self.servicio_ficheros:
+            return
+
+        fichero = input("Ruta del fichero que quieres subir ")
+
         broker = self.communicator()
-        sirviente = FileUploaderI()
-        adaptador = broker.createObjectAdapter("FileUploader")
-        proxy = adaptador.addWithUUID(sirviente)
+        sirviente = FileUploaderI(fichero)
+        adaptador = broker.createObjectAdapterWithEndpoints("FileUploader", "tcp")
+        proxy = adaptador.add(sirviente, broker.stringToIdentity("FileUploader"))
         adaptador.activate()
+        FileUploader = IceFlix.FileUploaderPrx.uncheckedCast(proxy)
+
+        try:
+            self.servicio_ficheros.uploadFile(FileUploader, token_admin)
+            logging.info("Fichero subido correctamente")
+        except IceFlix.Unauthorized:
+            logging.error("No estás autorizado para hacer esta acción")
 
     def eliminar_fichero(self):
         '''
         Para que un admin elimine un archivo
         '''
         if not self.titulo_seleccionado:
-            logging.error("Primero debes seleccionar un título <seleccionar_titulo>")
-            return
+            logging.error("No hay seleccionado ningún título")
+            logging.info("Vas a realizar una búsqueda en el catálogo")
+            self.realizar_busqueda()
+            self.seleccionar_titulo()
         self.conectar_servicio_ficheros()
         if not self.servicio_ficheros:
             return
