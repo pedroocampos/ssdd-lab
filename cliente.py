@@ -1,22 +1,55 @@
 #!/usr/bin/python3
 
+#pylint: disable=C0413
+#pylint: disable=E0401
 import logging
 import time
-import hashlib
 import getpass
+import hashlib
 import threading
+import sys
 import Ice
 Ice.loadSlice('IceFlix.ice')
 import IceFlix
 import cmd_cliente
 
 INTENTOS_RECONEXION = 3
+TAM_BLOQUE = 1024
+
+class FileUploaderI(IceFlix.FileUploader):
+    '''
+    Sirviente del FileUploader
+    '''
+
+    def __init__(self, fichero):
+        self.contenido_fichero = open(fichero, "rb")
+
+    def receive(self, size, current=None):
+        '''
+        Método que lee una cantidad de bytes
+        '''
+        self.contenido_fichero.read(size)
+
+    def close(self, current=None):
+        '''
+        Método para parar la transferencia de datos
+        '''
+        self.contenido_fichero.close()
+        current.adapter.remove(current.id)
+
 
 class Cliente(Ice.Application):
+    '''
+    Implementación de la clase cliente
+    '''
 
     servicio_main = None
     servicio_autenticacion = None
     servicio_catalogo = None
+    servicio_ficheros = None
+    token = None
+    resultados_busqueda = {}
+    titulo_seleccionado = None
 
     logging.basicConfig(level=logging.NOTSET)
 
@@ -43,20 +76,18 @@ class Cliente(Ice.Application):
         '''
         Para conectarte al servicio Authenticator
         '''
-        intentos = 0
-        proxy_authenticator = self.servicio_main.getAuthenticator()
-        if not proxy_authenticator:
-            logging.error("Proxy invalido")
-        while intentos != INTENTOS_RECONEXION:
-            try:
-                intentos += 1
-                self.servicio_autenticacion = IceFlix.Authenticator.checkedCast(proxy_authenticator)
-            except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Proxy inválido. Intentando reconectar...")
-                self.servicio_autenticacion = None
-                time.sleep(5)
-                continue
-            break
+        if not self.servicio_autenticacion:
+            intentos = 0
+            while intentos != INTENTOS_RECONEXION:
+                try:
+                    intentos += 1
+                    self.servicio_autenticacion = self.servicio_main.getAuthenticator()
+                except (IceFlix.TemporaryUnavailable, Ice.Exception):
+                    logging.error("Proxy inválido. Intentando reconectar...")
+                    self.servicio_autenticacion = None
+                    time.sleep(5)
+                    continue
+                break
 
     def conectar_catalogo(self):
         '''
@@ -64,20 +95,32 @@ class Cliente(Ice.Application):
         '''
         if not self.servicio_catalogo:
             intentos = 0
-            #proxy_catalogo = self.servicio_main.getCatalog()
-            proxy_catalogo = "proxy"
-            if not proxy_catalogo:
-                logging.error("Proxy invalido")
             while intentos != INTENTOS_RECONEXION:
                 try:
                     intentos += 1
-                    self.servicio_catalogo = IceFlix.MediaCatalog.checkedCast(proxy_catalogo)
+                    self.servicio_catalogo = self.servicio_main.getCatalog()
                 except (IceFlix.TemporaryUnavailable, Ice.Exception):
                     logging.error("Proxy inválido. Intentando reconectar...")
                     self.servicio_catalogo = None
                     time.sleep(5)
                     continue
                 break
+
+    def conectar_servicio_ficheros(self):
+        '''
+        Para conectarte al servicio de ficheros
+        '''
+        intentos = 0
+        while intentos != INTENTOS_RECONEXION:
+            try:
+                intentos += 1
+                self.servicio_ficheros = self.servicio_main.getFileService()
+            except (IceFlix.TemporaryUnavailable, Ice.Exception):
+                logging.error("Proxy inválido. Intentando reconectar...")
+                self.servicio_ficheros = None
+                time.sleep(5)
+                continue
+            break
 
     def desconectar_servicio(self):
         '''
@@ -114,12 +157,14 @@ class Cliente(Ice.Application):
         He usado threading.Timer para conseguir hacer otras cosas de forma concurrente
         mientras esta funcion se ejecuta
         '''
+
         try:
             if self.servicio_autenticacion is not None:
                 print("pidiendo token")
                 #self.token = self.servicio_autenticacion.refreshAuthorization(nombre_usuario, contrasena)
         except IceFlix.Unauthorized:
             logging.error("Ha ocurrido un error en la autenticación")
+            self.token = None
             return
 
         hilo = threading.Timer(120.0, self.pedir_token, args=(nombre_usuario, contrasena))
@@ -128,6 +173,9 @@ class Cliente(Ice.Application):
             hilo.cancel()
 
     def realizar_busqueda(self):
+        '''
+        Método que contiene todo el proceso para realizar una búsqueda
+        '''
         self.conectar_catalogo()
         #self.servicio_catalogo = "servicio_catalogo"
         if not self.servicio_catalogo:
@@ -181,11 +229,15 @@ class Cliente(Ice.Application):
 
         return media_ids
 
-    def buscar_titulos_por_id(self, ids):
+    def buscar_titulos_por_id(self, media_ids):
+        '''
+        Una vez tengo los media ids este método obtendrá los títulos
+        de cada media id
+        '''
         titulos = []
         try:
-            for id in ids:
-                titulos.append(self.servicio_catalogo.getTile(id, self.token))
+            for media_id in media_ids:
+                titulos.append(self.servicio_catalogo.getTile(media_id, self.token))
             return titulos
         except IceFlix.WrongMediaId:
             logging.error("Ha habido un error con el id")
@@ -205,7 +257,31 @@ class Cliente(Ice.Application):
         indice = input("Selecciona un título ")
         self.titulo_seleccionado = self.resultados_busqueda[indice]
 
-         # ------------------ TAREAS ADMINISTRATIVAS -------------------------
+    def descargar_archivo(self):
+        '''
+        Método para descargar un archivo
+        '''
+        self.conectar_servicio_ficheros()
+        if not self.servicio_ficheros:
+            return
+        try:
+            print("Titulo seleccionado " + self.titulo_seleccionado)
+            media_id = self.servicio_catalogo.getTilesByName(self.titulo_seleccionado, True)
+            file_handler = self.servicio_ficheros.openFile(media_id, self.token)
+
+            while True:
+                datos = file_handler.receive(TAM_BLOQUE, self.token)
+                if datos == 0:
+                    file_handler.close(self.token)
+                    break
+            logging.info("Descarga completada")
+        except IceFlix.WrongMediaId:
+            logging.error("Ha habido un error con el id")
+        except IceFlix.Unauthorized:
+            logging.error("No estás autorizado para realizar esta acción")
+
+
+     # ------------------ TAREAS ADMINISTRATIVAS -------------------------
 
     def tareas_administrativas(self):
         '''
@@ -226,8 +302,10 @@ class Cliente(Ice.Application):
                 self.eliminar_usuario(token_admin)
             elif opcion_menu == 3:
                 self.renombrar_archivo(token_admin)
+            elif opcion_menu == 4:
+                self.subir_fichero(token_admin)
             elif opcion_menu == 5:
-                self.eliminar_archivo(token_admin)
+                self.eliminar_fichero(token_admin)
             elif opcion_menu == 6:
                 return
 
@@ -284,7 +362,17 @@ class Cliente(Ice.Application):
         except IceFlix.Unauthorized:
             logging.error("Error al renombrar el fichero")
 
-    def eliminar_archivo(self):
+    def subir_fichero(self, token_admin):
+        '''
+        Método que crea el proxy del FileUploader
+        '''
+        broker = self.communicator()
+        sirviente = FileUploaderI()
+        adaptador = broker.createObjectAdapter("FileUploader")
+        proxy = adaptador.addWithUUID(sirviente)
+        adaptador.activate()
+
+    def eliminar_fichero(self):
         '''
         Para que un admin elimine un archivo
         '''
@@ -314,4 +402,4 @@ class Cliente(Ice.Application):
         return 0
 
 if __name__ == "__main__":
-    Cliente().main()
+    Cliente().main(sys.argv)
