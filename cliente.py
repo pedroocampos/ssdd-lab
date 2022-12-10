@@ -1,7 +1,5 @@
 #!/usr/bin/python3
 
-#pylint: disable=C0413
-#pylint: disable=E0401
 #pylint: disable=C0301
 
 import logging
@@ -50,6 +48,7 @@ class Cliente(Ice.Application):
     servicio_catalogo = None
     servicio_ficheros = None
     token = None
+    token_admin = None
     resultados_busqueda = []
     titulo_seleccionado = None
 
@@ -134,7 +133,6 @@ class Cliente(Ice.Application):
         self.servicio_catalogo = None
         self.servicio_ficheros = None
         self.token = None
-        self.resultados_busqueda.clear()
 
     def autenticar(self):
         '''
@@ -311,86 +309,86 @@ class Cliente(Ice.Application):
         correspondiente
         '''
         logging.info("Para acceder a estas tareas debes ser administrador")
-        token_admin = str(getpass.getpass("Token de administrador: "))
+        self.token_admin = str(getpass.getpass("Token de administrador: "))
         self.conectar_autenticador()
-        if not self.servicio_autenticacion.isAdmin(token_admin):
+        if not self.servicio_autenticacion.isAdmin(self.token_admin):
+            self.token_admin = None
             logging.error("No eres administrador")
         else:
-            self.token = token_admin
             opcion_menu = self.menu_administrador()
             if opcion_menu == 1:
-                self.añadir_usuario(token_admin)
+                self.añadir_usuario()
             elif opcion_menu == 2:
-                self.eliminar_usuario(token_admin)
+                self.eliminar_usuario()
             elif opcion_menu == 3:
-                self.renombrar_archivo(token_admin)
+                self.renombrar_archivo()
             elif opcion_menu == 4:
-                self.subir_fichero(token_admin)
+                self.subir_fichero()
             elif opcion_menu == 5:
-                self.eliminar_fichero(token_admin)
+                self.eliminar_fichero()
             elif opcion_menu == 6:
                 self.cerrar_sesion()
+                self.token_admin = None
                 return
 
     def menu_administrador(self):
         '''
         Para sacar por pantalla el menú de administrador
         '''
-        print("Seleccione una de las siguientes opciones:")
-        print("1. Añadir usuario")
-        print("2. Eliminar usuario")
-        print("3. Renombrar archivo")
-        print("4. Subir fichero")
-        print("5. Eliminar fichero")
-        print("6. Salir")
-        opcion = input("Opción: ")
-        if not opcion.isdigit() or int(opcion) not in range(1, 6):
+        print("1. Añadir usuario\n2. Eliminar usuario\n3. Renombrar archivo\n4. Subir fichero\
+        \n5. Eliminar fichero\n6. Salir")
+        opcion = input("Selecciona una opción: ")
+        if not opcion.isdigit() or int(opcion) not in range(1, 7):
             return
         return int(opcion)
 
-    def añadir_usuario(self, token_admin):
+    def añadir_usuario(self):
         '''
         Para que un admin añada un usuario
         '''
         nombre_usuario, contrasena = self.autenticar()
         try:
-            self.servicio_autenticacion.addUser(nombre_usuario, contrasena, token_admin)
+            self.servicio_autenticacion.addUser(nombre_usuario, contrasena, self.token_admin)
         except IceFlix.TemporaryUnavailable:
             logging.error("El servicio de autenticación no se encuentra disponible")
         except IceFlix.Unauthorized:
             logging.error("Error al añadir el usuario")
 
-    def eliminar_usuario(self, token_admin):
+    def eliminar_usuario(self):
         '''
         Para que un admin elimine un usuario
         '''
         self.conectar_autenticador()
         nombre_usuario = input("Usuario: ")
         try:
-            self.servicio_autenticacion.removeUser(nombre_usuario, token_admin)
+            self.servicio_autenticacion.removeUser(nombre_usuario, self.token_admin)
         except IceFlix.TemporaryUnavailable:
             logging.error("El servicio de autenticación no se encuentra disponible")
         except IceFlix.Unauthorized:
             logging.error("Error al eliminar el usuario")
 
-    def renombrar_archivo(self, token_admin):
+    def renombrar_archivo(self):
         '''
         Para que un admin renombre un archivo
         '''
         if not self.titulo_seleccionado:
-            logging.error("No hay seleccionado ningún título")
+            logging.error("No hay seleccionado ningún título, inicia sesión y selecciona uno")
+            nombre_usuario, contrasena = self.autenticar()
+            self.pedir_token(nombre_usuario, contrasena)
             self.realizar_busqueda()
             self.seleccionar_titulo()
         try:
             print("Titulo seleccionado " + self.titulo_seleccionado.info.name)
             nuevo_nombre = input("Nuevo nombre del archivo ")
-            self.servicio_catalogo.renameTile(self.titulo_seleccionado.mediaId, nuevo_nombre, token_admin)
+            self.servicio_catalogo.renameTile(self.titulo_seleccionado.mediaId, nuevo_nombre, self.token_admin)
         except IceFlix.WrongMediaId:
             logging.error("Ha habido un error con el id")
         except IceFlix.Unauthorized:
             logging.error("Error al renombrar el fichero")
 
-    def subir_fichero(self, token_admin):
+        self.cerrar_sesion()
+
+    def subir_fichero(self):
         '''
         Método que crea el proxy del FileUploader
         '''
@@ -408,18 +406,23 @@ class Cliente(Ice.Application):
         FileUploader = IceFlix.FileUploaderPrx.uncheckedCast(proxy)
 
         try:
-            self.servicio_ficheros.uploadFile(FileUploader, token_admin)
+            self.servicio_ficheros.uploadFile(FileUploader, self.token_admin)
             logging.info("Fichero subido correctamente")
         except IceFlix.Unauthorized:
             logging.error("No estás autorizado para hacer esta acción")
+
+        self.shutdownOnInterrupt()
+        broker.waitForShutdown()
+
 
     def eliminar_fichero(self):
         '''
         Para que un admin elimine un archivo
         '''
         if not self.titulo_seleccionado:
-            logging.error("No hay seleccionado ningún título")
-            logging.info("Vas a realizar una búsqueda en el catálogo")
+            logging.error("No hay seleccionado ningún título, inicia sesión y selecciona uno")
+            nombre_usuario, contrasena = self.autenticar()
+            self.pedir_token(nombre_usuario, contrasena)
             self.realizar_busqueda()
             self.seleccionar_titulo()
         self.conectar_servicio_ficheros()
@@ -427,11 +430,13 @@ class Cliente(Ice.Application):
             return
         try:
             print("Titulo seleccionado " + self.titulo_seleccionado.info.name)
-            self.servicio_catalogo.removeMedia(self.titulo_seleccionado.mediaId, self.servicio_ficheros)
+            self.servicio_ficheros.removeFile(self.titulo_seleccionado.mediaId, self.token_admin)
         except IceFlix.WrongMediaId:
             logging.error("Ha habido un error con el id")
         except IceFlix.Unauthorized:
             logging.error("Error al renombrar el fichero")
+
+        self.cerrar_sesion()
 
     def run(self, argv):
         '''

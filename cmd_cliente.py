@@ -119,4 +119,7 @@ class Terminal(cmd.Cmd):
         if not self.conectado():
             logging.error("No estás conectado <conectar>")
             return
+        if self.cliente.token:
+            logging.error("Debes cerrar sesión <cerrar_sesion>")
+            return
         self.cliente.tareas_administrativas()
