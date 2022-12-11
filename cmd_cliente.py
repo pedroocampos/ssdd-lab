@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 
+#pylint: disable=W0613
+
 import cmd
 import os
 import logging
@@ -29,7 +31,7 @@ class Terminal(cmd.Cmd):
         '''
         Método que controla el cambio del prompt
         '''
-        if self.cliente.token is not None:
+        if self.cliente.token:
             logging.info("Puedes cerrar sesión con el comando <cerrar_sesion>")
             self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado y autenticado) Cliente)> " + Fore.RESET
         elif self.conectado():
