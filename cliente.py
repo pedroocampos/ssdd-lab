@@ -10,6 +10,7 @@ import hashlib
 import threading
 import sys
 import Ice
+import IceStorm
 Ice.loadSlice('IceFlix.ice')
 import IceFlix
 import cmd_cliente
@@ -48,28 +49,50 @@ class Cliente(Ice.Application):
     servicio_autenticacion = None
     servicio_catalogo = None
     servicio_ficheros = None
+    topic_manager = None
     token = None
     resultados_busqueda = []
     titulo_seleccionado = None
 
     logging.basicConfig(level=logging.NOTSET)
 
+    def obtener_topic_manager(self):
+        '''
+        Para conseguir el proxy al TopicManager
+        '''
+        intentos = 0
+        proxy = self.communicator().propertyToProxy("main_prx")
+        while intentos != INTENTOS_RECONEXION:
+            try:
+                intentos += 1
+                self.topic_manager = IceStorm.TopicManagerPrx.checkedCast(proxy)
+            except Ice.Exception:
+                logging.error("Proxy inválido. Intentando reconectar...")
+                self.topic_manager = None
+                time.sleep(5)
+                continue
+
     def conectar_main(self):
         '''
         Para conectarte al servicio Main
         '''
+
         intentos = 0
-        main_proxy = self.communicator().propertyToProxy("main_prx")
+        topic_name = "MainTopic"
+        try:
+            topic = self.topic_manager.create(topic_name)
+        except IceStorm.TopicExists:
+            topic = self.topic_manager.retrieve(topic_name)
+        publisher = topic.getPublisher()
+
         while intentos != INTENTOS_RECONEXION:
             try:
-                intentos += 1
-                self.servicio_main = IceFlix.MainPrx.checkedCast(main_proxy)
+                self.servicio_main = IceFlix.MainPrx.uncheckedCast(publisher)
             except Ice.Exception:
                 logging.error("Proxy inválido. Intentando reconectar...")
                 self.servicio_main = None
                 time.sleep(5)
                 continue
-            break
 
     def conectar_autenticador(self):
         '''
@@ -306,6 +329,7 @@ class Cliente(Ice.Application):
         '''
         logging.info("Para acceder a estas tareas debes ser administrador")
         token_admin = str(getpass.getpass("Token de administrador: "))
+        token_admin = str(hashlib.sha256(token_admin.encode()).hexdigest())
         self.conectar_autenticador()
         if not self.servicio_autenticacion.isAdmin(token_admin):
             logging.error("No eres administrador")
@@ -387,11 +411,20 @@ class Cliente(Ice.Application):
         fichero = input("Ruta del fichero que quieres subir ")
 
         broker = self.communicator()
+
+        topic_name = "FileUploader"
+        try:
+            topic = self.topic_manager.create(topic_name)
+        except IceStorm.TopicExists:
+            topic = self.topic_manager.retrieve(topic_name)
+
         sirviente = FileUploaderI(fichero)
-        adaptador = broker.createObjectAdapterWithEndpoints("FileUploader", "tcp")
-        proxy = adaptador.add(sirviente, broker.stringToIdentity("FileUploader"))
+        adaptador = broker.createObjectAdapter("FileUploader")
+        file_uploader = adaptador.addWithUUID(sirviente)
+
+        qos = {}
+        topic.subscribeAndGetPublisher(qos, file_uploader)
         adaptador.activate()
-        file_uploader = IceFlix.FileUploaderPrx.uncheckedCast(proxy)
 
         try:
             self.servicio_ficheros.uploadFile(file_uploader, token_admin)
@@ -426,6 +459,12 @@ class Cliente(Ice.Application):
         '''
         Definicion del metodo run de Ice.Application
         '''
+
+        self.obtener_topic_manager()
+        if not self.topic_manager:
+            logging.error("Proxy TopicManager invalido")
+            return 1
+
         terminal = cmd_cliente.Terminal()
         terminal.cmdloop()
 
