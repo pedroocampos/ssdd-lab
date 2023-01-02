@@ -9,6 +9,7 @@ import getpass
 import hashlib
 import threading
 import sys
+import random
 import Ice
 import IceStorm
 Ice.loadSlice('IceFlix.ice')
@@ -17,6 +18,20 @@ import cmd_cliente
 
 INTENTOS_RECONEXION = 3
 TAM_BLOQUE = 1024
+
+class AnnouncementI(IceFlix.Announcement):
+
+    def __init__(self):
+        self.main = []
+
+    def announce(self, servicio, servicio_id, current=None):
+        '''
+        Metodo para manegar los announcements del servicio main
+        '''
+        if servicio.ice_isA("::IceFlix::Main"):
+            if servicio not in self.main:
+                self.main.append(IceFlix.MainPrx.uncheckedCast(servicio))
+
 
 class FileUploaderI(IceFlix.FileUploader):
     '''
@@ -49,45 +64,45 @@ class Cliente(Ice.Application):
     servicio_autenticacion = None
     servicio_catalogo = None
     servicio_ficheros = None
-    topic_manager = None
+    sirviente_announcement = None
     token = None
     resultados_busqueda = []
     titulo_seleccionado = None
 
     logging.basicConfig(level=logging.NOTSET)
 
-    def obtener_topic_manager(self):
+    def obtener_topic_manager(self, broker):
         '''
         Para conseguir el proxy al TopicManager
         '''
-        intentos = 0
-        proxy = self.communicator().propertyToProxy("main_prx")
-        while intentos != INTENTOS_RECONEXION:
-            try:
-                intentos += 1
-                self.topic_manager = IceStorm.TopicManagerPrx.checkedCast(proxy)
-            except Ice.Exception:
-                logging.error("Proxy inválido. Intentando reconectar...")
-                self.topic_manager = None
-                time.sleep(5)
-                continue
+        proxy = broker.stringToProxy('IceStorm/TopicManager:tcp -p 10000')
+        topic_manager = IceStorm.TopicManagerPrx.checkedCast(proxy)
+        if not topic_manager:
+            raise ValueError("No se pudo conectar con el TopicManager")
+        return topic_manager
+
+    def obtener_topic(self, topic_manager, nombre_topic):
+        '''
+        Para obtener el proxy del topic que queramos
+        '''
+
+        try:
+            topic = topic_manager.retrieve(nombre_topic)
+        except IceStorm.NoSuchTopic:
+            topic = topic_manager.create(nombre_topic)
+        finally:
+            return topic
 
     def conectar_main(self):
         '''
         Para conectarte al servicio Main
         '''
-
         intentos = 0
-        topic_name = "MainTopic"
-        try:
-            topic = self.topic_manager.create(topic_name)
-        except IceStorm.TopicExists:
-            topic = self.topic_manager.retrieve(topic_name)
-        publisher = topic.getPublisher()
 
         while intentos != INTENTOS_RECONEXION:
             try:
-                self.servicio_main = IceFlix.MainPrx.uncheckedCast(publisher)
+                intentos += 1
+                self.servicio_main = random.choice(self.sirviente_announcement.main)
             except Ice.Exception:
                 logging.error("Proxy inválido. Intentando reconectar...")
                 self.servicio_main = None
@@ -411,23 +426,16 @@ class Cliente(Ice.Application):
         fichero = input("Ruta del fichero que quieres subir ")
 
         broker = self.communicator()
-
-        topic_name = "FileUploader"
-        try:
-            topic = self.topic_manager.create(topic_name)
-        except IceStorm.TopicExists:
-            topic = self.topic_manager.retrieve(topic_name)
-
         sirviente = FileUploaderI(fichero)
         adaptador = broker.createObjectAdapter("FileUploader")
-        file_uploader = adaptador.addWithUUID(sirviente)
-
-        qos = {}
-        topic.subscribeAndGetPublisher(qos, file_uploader)
+        proxy = adaptador.addWithUUID(sirviente)
         adaptador.activate()
 
+        topic_file_uploader = self.obtener_topic(self.obtener_topic_manager(broker), "FileUploader")
+        topic_file_uploader.subscribeAndGetPublisher({}, proxy)
+
         try:
-            self.servicio_ficheros.uploadFile(file_uploader, token_admin)
+            self.servicio_ficheros.uploadFile(proxy, token_admin)
             logging.info("Fichero subido correctamente")
         except IceFlix.Unauthorized:
             logging.error("No estás autorizado para hacer esta acción")
@@ -460,13 +468,24 @@ class Cliente(Ice.Application):
         Definicion del metodo run de Ice.Application
         '''
 
-        self.obtener_topic_manager()
-        if not self.topic_manager:
-            logging.error("Proxy TopicManager invalido")
-            return 1
+        broker = self.communicator()
+        self.sirviente_announcement = AnnouncementI()
+        adaptador = broker.createObjectAdapterWithEndpoints("Announcement", "tcp")
+        proxy = adaptador.addWithUUID(self.sirviente_announcement)
+        adaptador.activate()
+
+        topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcement")
+        topic_announcement.subscribeAndGetPublisher({}, proxy)
+
+        announcement_pub = topic_announcement.getPublisher()
+        announcement = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
 
         terminal = cmd_cliente.Terminal()
         terminal.cmdloop()
+
+        self.shutdownOnInterrupt()
+        broker.waitForShutdown()
+        topic_announcement.unsubscribe(proxy)
 
         return 0
 
