@@ -19,6 +19,7 @@ import cmd_cliente
 INTENTOS_RECONEXION = 3
 TAM_BLOQUE = 1024
 TOPIC_MANAGER_PROXY = "IceStorm/TopicManager:tcp -p 10000"
+TIEMPO_ESCUCHA = 120
 
 class AnnouncementI(IceFlix.Announcement):
     '''
@@ -133,6 +134,9 @@ class FileUploaderI(IceFlix.FileUploader):
         current.adapter.remove(current.id)
 
 
+announcement = AnnouncementI() # es una variable para almacenar el sirviente porque he encontrado problemas
+                              # para pasarlo del metodo run a conectar_main
+
 class Cliente(Ice.Application):
     '''
     Implementación de la clase cliente
@@ -142,13 +146,6 @@ class Cliente(Ice.Application):
     servicio_autenticacion = None
     servicio_catalogo = None
     servicio_ficheros = None
-    canales_eventos = {
-        "Announcement": None,
-        "FileAvailabilityAnnounce": None,
-        "CatalogUpdate": None,
-        "UserUpdate": None
-    }
-    sirviente_announcement = None
     token = None
     resultados_busqueda = []
     titulo_seleccionado = None
@@ -185,9 +182,9 @@ class Cliente(Ice.Application):
         while intentos != INTENTOS_RECONEXION:
             try:
                 intentos += 1
-                self.servicio_main = random.choice(self.canales_eventos["Announcement"].main)
-            except Ice.Exception:
-                logging.error("Proxy inválido. Intentando reconectar...")
+                self.servicio_main = random.choice(announcement.main)
+            except (Ice.Exception, IndexError):
+                logging.error("Intentando reconectar...")
                 self.servicio_main = None
                 time.sleep(5)
                 continue
@@ -202,7 +199,7 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_autenticacion = self.servicio_main.getAuthenticator()
             except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Proxy inválido. Intentando reconectar...")
+                logging.error("Intentando reconectar...")
                 self.servicio_autenticacion = None
                 time.sleep(5)
                 continue
@@ -218,7 +215,7 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_catalogo = self.servicio_main.getCatalog()
             except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Proxy inválido. Intentando reconectar...")
+                logging.error("Intentando reconectar...")
                 self.servicio_catalogo = None
                 time.sleep(5)
                 continue
@@ -234,7 +231,7 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_ficheros = self.servicio_main.getFileService()
             except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Proxy inválido. Intentando reconectar...")
+                logging.error("Intentando reconectar...")
                 self.servicio_ficheros = None
                 time.sleep(5)
                 continue
@@ -444,6 +441,12 @@ class Cliente(Ice.Application):
             elif opcion_menu == 5:
                 self.eliminar_fichero(token_admin)
             elif opcion_menu == 6:
+                self.conectar_user_updates()
+            elif opcion_menu == 7:
+                self.conectar_catalog_updates()
+            elif opcion_menu == 8:
+                self.conectar_file_availability()
+            elif opcion_menu == 9:
                 return
 
     def menu_administrador(self):
@@ -451,9 +454,10 @@ class Cliente(Ice.Application):
         Para sacar por pantalla el menú de administrador
         '''
         print("1. Añadir usuario\n2. Eliminar usuario\n3. Renombrar archivo\n4. Subir fichero\
-        \n5. Eliminar fichero\n6. Salir")
+        \n5. Eliminar fichero\n6. Subscribirse a UserUpdates\n7. Subscribirse a CatalogUpdates\
+        \n8. Subscribirse a FileAvailabilityAnnounce\n9. Salir")
         opcion = input("Selecciona una opción: ")
-        if not opcion.isdigit() or int(opcion) not in range(1, 7):
+        if not opcion.isdigit() or int(opcion) not in range(1, 10):
             return
         return int(opcion)
 
@@ -545,40 +549,92 @@ class Cliente(Ice.Application):
         except IceFlix.Unauthorized:
             logging.error("Error al renombrar el fichero")
 
-    def suscribir_canales_eventos(self):
-        #pylint: disable=W0613
+    def conectar_user_updates(self):
+        '''
+        Para subscribirse a UserUpdates y ponerte a la escucha de los
+        eventos que vayan ocurriendo durante un tiempo=TIEMPO_ESCUCHA
+        '''
+        logging.info("Para salir pulsa CTRL-C")
 
         broker = self.communicator()
-        adaptador = broker.createObjectAdapterWithEndpoints("Announcement", "tcp")
+        adaptador = broker.createObjectAdapterWithEndpoints("UserUpdates", "tcp")
         adaptador.activate()
 
-        topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcements")
-        self.canales_eventos["Announcement"] = AnnouncementI()
-        announcement_prx = adaptador.addWithUUID(self.canales_eventos["Announcement"])
-        topic_announcement.subscribeAndGetPublisher({}, announcement_prx)
-        announcement_pub = topic_announcement.getPublisher()
-        announcement = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
-
         topic_user_update = self.obtener_topic(self.obtener_topic_manager(broker), "UserUpdates")
-        self.canales_eventos["UserUpdate"] = UserUpdateI()
-        user_update_prx = adaptador.addWithUUID(self.canales_eventos["UserUpdate"])
+        sirv_user_updates = UserUpdateI()
+        user_update_prx = adaptador.addWithUUID(sirv_user_updates)
         topic_user_update.subscribeAndGetPublisher({}, user_update_prx)
         user_update_pub = topic_user_update.getPublisher()
-        user_update = IceFlix.UserUpdatePrx.uncheckedCast(user_update_pub)
+        user_update_pub = IceFlix.UserUpdatePrx.uncheckedCast(user_update_pub)
+
+        tiempo = 0
+        while tiempo != TIEMPO_ESCUCHA:
+            try:
+                tiempo += 1
+            except KeyboardInterrupt:
+                topic_user_update.unsubscribe(user_update_prx)
+                return
+
+        self.shutdownOnInterrupt()
+        broker.waitForShutdown()
+
+    def conectar_catalog_updates(self):
+        '''
+        Para subscribirse a CatalogUpdates y ponerte a la escucha de los
+        eventos que vayan ocurriendo durante un tiempo=TIEMPO_ESCUCHA
+        '''
+        logging.info("Para salir pulsa CTRL-C")
+
+        broker = self.communicator()
+        adaptador = broker.createObjectAdapterWithEndpoints("CatalogUpdates", "tcp")
+        adaptador.activate()
 
         topic_catalog_update = self.obtener_topic(self.obtener_topic_manager(broker), "CatalogUpdates")
-        self.canales_eventos["CatalogUpdate"] = CatalogUpdateI()
-        catalog_update_prx = adaptador.addWithUUID(self.canales_eventos["CatalogUpdate"])
+        sirv_catalog_updates = CatalogUpdateI()
+        catalog_update_prx = adaptador.addWithUUID(sirv_catalog_updates)
         topic_catalog_update.subscribeAndGetPublisher({}, catalog_update_prx)
         catalog_update_pub = topic_catalog_update.getPublisher()
-        catalog_update = IceFlix.CatalogUpdatePrx.uncheckedCast(catalog_update_pub)
+        catalog_update_pub = IceFlix.CatalogUpdatePrx.uncheckedCast(catalog_update_pub)
+
+        tiempo = 0
+        while tiempo != TIEMPO_ESCUCHA:
+            try:
+                tiempo += 1
+            except KeyboardInterrupt:
+                topic_catalog_update.unsubscribe(catalog_update_prx)
+                return
+
+        self.shutdownOnInterrupt()
+        broker.waitForShutdown()
+
+    def conectar_file_availability(self):
+        '''
+        Para subscribirse a FileAvailability y ponerte a la escucha de los
+        eventos que vayan ocurriendo durante un tiempo=TIEMPO_ESCUCHA
+        '''
+        logging.info("Para salir pulsa CTRL-C")
+
+        broker = self.communicator()
+        adaptador = broker.createObjectAdapterWithEndpoints("FileAvailability", "tcp")
+        adaptador.activate()
 
         topic_file_availability = self.obtener_topic(self.obtener_topic_manager(broker), "FileAvailabilityAnnounce")
-        self.canales_eventos["FileAvailabilityAnnounce"] = FileAvailabilityAnnounceI()
-        file_availability_prx = adaptador.addWithUUID(self.canales_eventos["FileAvailabilityAnnounce"])
+        sirv_file_availability = FileAvailabilityAnnounceI()
+        file_availability_prx = adaptador.addWithUUID(sirv_file_availability)
         topic_file_availability.subscribeAndGetPublisher({}, file_availability_prx)
         file_availability_pub = topic_file_availability.getPublisher()
-        file_availability = IceFlix.FileAvailabilityAnnouncePrx.uncheckedCast(file_availability_pub)
+        file_availability_pub = IceFlix.FileAvailabilityAnnouncePrx.uncheckedCast(file_availability_pub)
+
+        tiempo = 0
+        while tiempo != TIEMPO_ESCUCHA:
+            try:
+                tiempo += 1
+            except KeyboardInterrupt:
+                topic_file_availability.unsubscribe(file_availability_prx)
+                return
+
+        self.shutdownOnInterrupt()
+        broker.waitForShutdown()
 
 
     def run(self, argv):
@@ -592,32 +648,10 @@ class Cliente(Ice.Application):
         adaptador.activate()
 
         topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcements")
-        self.canales_eventos["Announcement"] = AnnouncementI()
-        announcement_prx = adaptador.addWithUUID(self.canales_eventos["Announcement"])
+        announcement_prx = adaptador.addWithUUID(announcement)
         topic_announcement.subscribeAndGetPublisher({}, announcement_prx)
         announcement_pub = topic_announcement.getPublisher()
-        announcement = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
-
-        topic_user_update = self.obtener_topic(self.obtener_topic_manager(broker), "UserUpdates")
-        self.canales_eventos["UserUpdate"] = UserUpdateI()
-        user_update_prx = adaptador.addWithUUID(self.canales_eventos["UserUpdate"])
-        topic_user_update.subscribeAndGetPublisher({}, user_update_prx)
-        user_update_pub = topic_user_update.getPublisher()
-        user_update = IceFlix.UserUpdatePrx.uncheckedCast(user_update_pub)
-
-        topic_catalog_update = self.obtener_topic(self.obtener_topic_manager(broker), "CatalogUpdates")
-        self.canales_eventos["CatalogUpdate"] = CatalogUpdateI()
-        catalog_update_prx = adaptador.addWithUUID(self.canales_eventos["CatalogUpdate"])
-        topic_catalog_update.subscribeAndGetPublisher({}, catalog_update_prx)
-        catalog_update_pub = topic_catalog_update.getPublisher()
-        catalog_update = IceFlix.CatalogUpdatePrx.uncheckedCast(catalog_update_pub)
-
-        topic_file_availability = self.obtener_topic(self.obtener_topic_manager(broker), "FileAvailabilityAnnounce")
-        self.canales_eventos["FileAvailabilityAnnounce"] = FileAvailabilityAnnounceI()
-        file_availability_prx = adaptador.addWithUUID(self.canales_eventos["FileAvailabilityAnnounce"])
-        topic_file_availability.subscribeAndGetPublisher({}, file_availability_prx)
-        file_availability_pub = topic_file_availability.getPublisher()
-        file_availability = IceFlix.FileAvailabilityAnnouncePrx.uncheckedCast(file_availability_pub)
+        announcement_pub = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
 
         terminal = cmd_cliente.Terminal()
         terminal.cmdloop()
@@ -625,9 +659,6 @@ class Cliente(Ice.Application):
         self.shutdownOnInterrupt()
         broker.waitForShutdown()
         topic_announcement.unsubscribe(announcement_prx)
-        topic_announcement.unsubscribe(user_update_prx)
-        topic_announcement.unsubscribe(catalog_update_prx)
-        topic_announcement.unsubscribe(file_availability_prx)
 
         return 0
 
