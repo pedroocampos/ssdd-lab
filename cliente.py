@@ -38,6 +38,20 @@ class AnnouncementI(IceFlix.Announcement):
             if servicio not in self.main:
                 self.main.append(IceFlix.MainPrx.uncheckedCast(servicio))
 
+    def eliminar_servicios_inactivos(self, current=None):
+        '''
+        Metodo que elimina los servicios que no estan activos
+        '''
+        iterador = iter(self.main)
+        while True:
+            try:
+                servicio = iterador.__next__()
+                servicio.ice_ping()
+            except StopIteration:
+                break
+            except Ice.LocalException:
+                self.main.remove(servicio)
+
 class UserUpdateI(IceFlix.UserUpdate):
     '''
     Sirviente de UserUpdate
@@ -134,9 +148,6 @@ class FileUploaderI(IceFlix.FileUploader):
         current.adapter.remove(current.id)
 
 
-announcement = AnnouncementI() # es una variable para almacenar el sirviente porque he encontrado problemas
-                              # para pasarlo del metodo run a conectar_main
-
 class Cliente(Ice.Application):
     '''
     Implementación de la clase cliente
@@ -149,6 +160,7 @@ class Cliente(Ice.Application):
     token = None
     resultados_busqueda = []
     titulo_seleccionado = None
+    announcement = None
 
     logging.basicConfig(level=logging.NOTSET)
 
@@ -173,16 +185,70 @@ class Cliente(Ice.Application):
         finally:
             return topic
 
+    def subscribir_announcement(self):
+        '''
+        Metodo para subscribirse al announcement
+        '''
+        broker = self.communicator()
+        self.adaptador = broker.createObjectAdapterWithEndpoints("Announcements", "tcp")
+        self.adaptador.activate()
+
+        self.announcement = AnnouncementI()
+        topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcements")
+        announcement_prx = self.adaptador.addWithUUID(self.announcement)
+        topic_announcement.subscribeAndGetPublisher({}, announcement_prx)
+        announcement_pub = topic_announcement.getPublisher()
+        announcement_pub = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
+
+
+    def reconectar(self):
+        '''
+        Metodo que lanza pings al main al que nos hemos
+        conectado para ver si sigue vivo, en caso de que
+        no responda intentaremos coger otro
+        '''
+
+        try:
+            self.servicio_main.ice_ping()
+        except Ice.Exception:
+            intentos = 0
+            while intentos != INTENTOS_RECONEXION:
+                try:
+                    intentos += 1
+                    self.servicio_main = random.choice(self.announcement.main)
+                except (Ice.Exception, IndexError):
+                    logging.error("Intentando reconectar...")
+                    self.servicio_main = None
+                    time.sleep(5)
+                    continue
+
+        hilo  = threading.Timer(1.0, self.reconectar)
+        hilo.daemon = True
+        hilo.start()
+        if not self.servicio_main:
+            hilo.cancel()
+
+    def comprobar_servicios(self):
+        self.announcement.eliminar_servicios_inactivos()
+        hilo = threading.Timer(10.0, self.comprobar_servicios)
+        hilo.daemon = True
+        hilo.start()
+        if not self.announcement.main:
+            hilo.cancel()
+
     def conectar_main(self):
         '''
         Para conectarte al servicio Main
         '''
+        if not self.announcement:
+            self.subscribir_announcement()
+
         intentos = 0
 
         while intentos != INTENTOS_RECONEXION:
             try:
                 intentos += 1
-                self.servicio_main = random.choice(announcement.main)
+                self.servicio_main = random.choice(self.announcement.main)
             except (Ice.Exception, IndexError):
                 logging.error("Intentando reconectar...")
                 self.servicio_main = None
@@ -243,6 +309,7 @@ class Cliente(Ice.Application):
         '''
         self.servicio_main = None
 
+
     def cerrar_sesion(self):
         '''
         Para cerrar la sesion
@@ -290,6 +357,8 @@ class Cliente(Ice.Application):
         Método que contiene todo el proceso para realizar una búsqueda
         '''
         self.conectar_catalogo()
+        if not self.servicio_catalogo:
+            return
 
         tipo_busqueda = input("¿Quiere buscar por nombre o tags? [nombre/tags] ")
         if tipo_busqueda == "nombre":
@@ -557,12 +626,10 @@ class Cliente(Ice.Application):
         logging.info("Para salir pulsa CTRL-C")
 
         broker = self.communicator()
-        adaptador = broker.createObjectAdapterWithEndpoints("UserUpdates", "tcp")
-        adaptador.activate()
 
         topic_user_update = self.obtener_topic(self.obtener_topic_manager(broker), "UserUpdates")
         sirv_user_updates = UserUpdateI()
-        user_update_prx = adaptador.addWithUUID(sirv_user_updates)
+        user_update_prx = self.adaptador.addWithUUID(sirv_user_updates)
         topic_user_update.subscribeAndGetPublisher({}, user_update_prx)
         user_update_pub = topic_user_update.getPublisher()
         user_update_pub = IceFlix.UserUpdatePrx.uncheckedCast(user_update_pub)
@@ -575,9 +642,6 @@ class Cliente(Ice.Application):
                 topic_user_update.unsubscribe(user_update_prx)
                 return
 
-        self.shutdownOnInterrupt()
-        broker.waitForShutdown()
-
     def conectar_catalog_updates(self):
         '''
         Para subscribirse a CatalogUpdates y ponerte a la escucha de los
@@ -586,12 +650,10 @@ class Cliente(Ice.Application):
         logging.info("Para salir pulsa CTRL-C")
 
         broker = self.communicator()
-        adaptador = broker.createObjectAdapterWithEndpoints("CatalogUpdates", "tcp")
-        adaptador.activate()
 
         topic_catalog_update = self.obtener_topic(self.obtener_topic_manager(broker), "CatalogUpdates")
         sirv_catalog_updates = CatalogUpdateI()
-        catalog_update_prx = adaptador.addWithUUID(sirv_catalog_updates)
+        catalog_update_prx = self.adaptador.addWithUUID(sirv_catalog_updates)
         topic_catalog_update.subscribeAndGetPublisher({}, catalog_update_prx)
         catalog_update_pub = topic_catalog_update.getPublisher()
         catalog_update_pub = IceFlix.CatalogUpdatePrx.uncheckedCast(catalog_update_pub)
@@ -604,9 +666,6 @@ class Cliente(Ice.Application):
                 topic_catalog_update.unsubscribe(catalog_update_prx)
                 return
 
-        self.shutdownOnInterrupt()
-        broker.waitForShutdown()
-
     def conectar_file_availability(self):
         '''
         Para subscribirse a FileAvailability y ponerte a la escucha de los
@@ -615,12 +674,10 @@ class Cliente(Ice.Application):
         logging.info("Para salir pulsa CTRL-C")
 
         broker = self.communicator()
-        adaptador = broker.createObjectAdapterWithEndpoints("FileAvailability", "tcp")
-        adaptador.activate()
 
         topic_file_availability = self.obtener_topic(self.obtener_topic_manager(broker), "FileAvailabilityAnnounce")
         sirv_file_availability = FileAvailabilityAnnounceI()
-        file_availability_prx = adaptador.addWithUUID(sirv_file_availability)
+        file_availability_prx = self.adaptador.addWithUUID(sirv_file_availability)
         topic_file_availability.subscribeAndGetPublisher({}, file_availability_prx)
         file_availability_pub = topic_file_availability.getPublisher()
         file_availability_pub = IceFlix.FileAvailabilityAnnouncePrx.uncheckedCast(file_availability_pub)
@@ -633,32 +690,13 @@ class Cliente(Ice.Application):
                 topic_file_availability.unsubscribe(file_availability_prx)
                 return
 
-        self.shutdownOnInterrupt()
-        broker.waitForShutdown()
-
-
     def run(self, argv):
         '''
         Definicion del metodo run de Ice.Application
         '''
-        #pylint: disable=W0613
-
-        broker = self.communicator()
-        adaptador = broker.createObjectAdapterWithEndpoints("Announcement", "tcp")
-        adaptador.activate()
-
-        topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcements")
-        announcement_prx = adaptador.addWithUUID(announcement)
-        topic_announcement.subscribeAndGetPublisher({}, announcement_prx)
-        announcement_pub = topic_announcement.getPublisher()
-        announcement_pub = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
 
         terminal = cmd_cliente.Terminal()
         terminal.cmdloop()
-
-        self.shutdownOnInterrupt()
-        broker.waitForShutdown()
-        topic_announcement.unsubscribe(announcement_prx)
 
         return 0
 

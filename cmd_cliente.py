@@ -37,6 +37,8 @@ class Terminal(cmd.Cmd):
         elif self.conectado():
             logging.info("Recuerda que puedes autenticarte con el comando <autenticar>")
             self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado) Cliente> " + Fore.RESET
+            self.cliente.reconectar()
+            self.cliente.comprobar_servicios()
         else:
             self.prompt = Style.BRIGHT +"<Cliente> " + Fore.RESET
 
@@ -47,7 +49,7 @@ class Terminal(cmd.Cmd):
 
     def do_exit(self, line):
         "Para salir de la terminal"
-        os._exit(os.EX_OK)
+        return True
 
     def default(self, line):
         logging.error("Orden no encontrada")
