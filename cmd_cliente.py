@@ -38,7 +38,6 @@ class Terminal(cmd.Cmd):
             logging.info("Recuerda que puedes autenticarte con el comando <autenticar>")
             self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado) Cliente> " + Fore.RESET
             self.cliente.reconectar()
-            self.cliente.comprobar_servicios()
         else:
             self.prompt = Style.BRIGHT +"<Cliente> " + Fore.RESET
 

@@ -10,6 +10,7 @@ import hashlib
 import threading
 import sys
 import random
+import os
 import Ice
 import IceStorm
 Ice.loadSlice('IceFlix.ice')
@@ -45,11 +46,11 @@ class AnnouncementI(IceFlix.Announcement):
         iterador = iter(self.main)
         while True:
             try:
-                servicio = iterador.__next__()
+                servicio = next(iterador)
                 servicio.ice_ping()
             except StopIteration:
                 break
-            except Ice.LocalException:
+            except Ice.Exception:
                 self.main.remove(servicio)
 
 class UserUpdateI(IceFlix.UserUpdate):
@@ -200,6 +201,8 @@ class Cliente(Ice.Application):
         announcement_pub = topic_announcement.getPublisher()
         announcement_pub = IceFlix.AnnouncementPrx.uncheckedCast(announcement_pub)
 
+        self.comprobar_servicios()
+
 
     def reconectar(self):
         '''
@@ -207,34 +210,25 @@ class Cliente(Ice.Application):
         conectado para ver si sigue vivo, en caso de que
         no responda intentaremos coger otro
         '''
+        if self.servicio_main:
+            try:
+                self.servicio_main.ice_ping()
+            except Ice.Exception:
+                if not self.announcement.main:
+                    logging.error("Se ha perdido la conexion con el servicio Main")
+                    os._exit(0)
+                else:
+                    self.conectar_main()
 
-        try:
-            self.servicio_main.ice_ping()
-        except Ice.Exception:
-            intentos = 0
-            while intentos != INTENTOS_RECONEXION:
-                try:
-                    intentos += 1
-                    self.servicio_main = random.choice(self.announcement.main)
-                except (Ice.Exception, IndexError):
-                    logging.error("Intentando reconectar...")
-                    self.servicio_main = None
-                    time.sleep(5)
-                    continue
-
-        hilo  = threading.Timer(1.0, self.reconectar)
-        hilo.daemon = True
-        hilo.start()
-        if not self.servicio_main:
-            hilo.cancel()
+            hilo  = threading.Timer(2.0, self.reconectar)
+            hilo.daemon = True
+            hilo.start()
 
     def comprobar_servicios(self):
         self.announcement.eliminar_servicios_inactivos()
-        hilo = threading.Timer(10.0, self.comprobar_servicios)
+        hilo = threading.Timer(5.0, self.comprobar_servicios)
         hilo.daemon = True
         hilo.start()
-        if not self.announcement.main:
-            hilo.cancel()
 
     def conectar_main(self):
         '''
