@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 
-#pylint: disable=E0401
 #pylint: disable=C0413
 
 import logging
@@ -14,7 +13,7 @@ import os
 import Ice
 import IceStorm
 Ice.loadSlice('IceFlix.ice')
-import IceFlix
+import IceFlix #pylint: disable=E0401
 import cmd_cliente
 
 INTENTOS_RECONEXION = 3
@@ -37,6 +36,7 @@ class AnnouncementI(IceFlix.Announcement):
         '''
         if servicio.ice_isA("::IceFlix::Main"):
             if servicio not in self.main:
+                logging.info("Se ha recibido un nuevo announce")
                 self.main.append(IceFlix.MainPrx.uncheckedCast(servicio))
 
     def eliminar_servicios_inactivos(self, current=None):
@@ -169,16 +169,27 @@ class Cliente(Ice.Application):
         '''
         Para conseguir el proxy al TopicManager
         '''
-        proxy = broker.stringToProxy(TOPIC_MANAGER_PROXY)
-        topic_manager = IceStorm.TopicManagerPrx.checkedCast(proxy)
-        if not topic_manager:
-            raise ValueError("No se pudo conectar con el TopicManager")
+        intentos = 0
+        topic_manager = None
+        while intentos != INTENTOS_RECONEXION:
+            try:
+                intentos += 1
+                proxy = broker.stringToProxy(TOPIC_MANAGER_PROXY)
+                topic_manager = IceStorm.TopicManagerPrx.checkedCast(proxy)
+            except Ice.Exception:
+                logging.error("Intentando reconectar con el TopicManager...")
+                topic_manager = None
+                time.sleep(5)
+                continue
         return topic_manager
 
     def obtener_topic(self, topic_manager, nombre_topic):
         '''
         Para obtener el proxy del topic que queramos
         '''
+        if not topic_manager:
+            return
+
         try:
             topic = topic_manager.retrieve(nombre_topic)
         except IceStorm.NoSuchTopic:
@@ -191,11 +202,14 @@ class Cliente(Ice.Application):
         Metodo para subscribirse al announcement
         '''
         broker = self.communicator()
+        topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcements")
+        if not topic_announcement:
+            return
+
         self.adaptador = broker.createObjectAdapterWithEndpoints("Announcements", "tcp")
         self.adaptador.activate()
 
         self.announcement = AnnouncementI()
-        topic_announcement = self.obtener_topic(self.obtener_topic_manager(broker), "Announcements")
         announcement_prx = self.adaptador.addWithUUID(self.announcement)
         topic_announcement.subscribeAndGetPublisher({}, announcement_prx)
         announcement_pub = topic_announcement.getPublisher()
@@ -244,10 +258,12 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_main = random.choice(self.announcement.main)
             except (Ice.Exception, IndexError):
-                logging.error("Intentando reconectar...")
+                logging.error("Intentando reconectar con el servicio Main...")
                 self.servicio_main = None
                 time.sleep(5)
                 continue
+            except AttributeError:
+                return
 
     def conectar_autenticador(self):
         '''
@@ -259,7 +275,7 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_autenticacion = self.servicio_main.getAuthenticator()
             except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Intentando reconectar...")
+                logging.error("Intentando reconectar con el servicio Autenticador...")
                 self.servicio_autenticacion = None
                 time.sleep(5)
                 continue
@@ -275,7 +291,7 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_catalogo = self.servicio_main.getCatalog()
             except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Intentando reconectar...")
+                logging.error("Intentando reconectar con el servicio Catalogo...")
                 self.servicio_catalogo = None
                 time.sleep(5)
                 continue
@@ -291,7 +307,7 @@ class Cliente(Ice.Application):
                 intentos += 1
                 self.servicio_ficheros = self.servicio_main.getFileService()
             except (IceFlix.TemporaryUnavailable, Ice.Exception):
-                logging.error("Intentando reconectar...")
+                logging.error("Intentando reconectar con el servicio de Ficheros...")
                 self.servicio_ficheros = None
                 time.sleep(5)
                 continue
@@ -489,6 +505,8 @@ class Cliente(Ice.Application):
         token_admin = str(getpass.getpass("Token de administrador: "))
         token_admin = str(hashlib.sha256(token_admin.encode()).hexdigest())
         self.conectar_autenticador()
+        if not self.servicio_autenticacion:
+            return
         if not self.servicio_autenticacion.isAdmin(token_admin):
             logging.error("No eres administrador")
         else:
@@ -541,6 +559,8 @@ class Cliente(Ice.Application):
         Para que un admin elimine un usuario
         '''
         self.conectar_autenticador()
+        if not self.servicio_autenticacion:
+            return
         nombre_usuario = input("Usuario: ")
         try:
             self.servicio_autenticacion.removeUser(nombre_usuario, token_admin)
@@ -554,6 +574,8 @@ class Cliente(Ice.Application):
         Para que un admin renombre un archivo
         '''
         self.conectar_catalogo()
+        if not self.servicio_catalogo:
+            return
         try:
             if not self.titulo_seleccionado:
                 media_id = input("Mediaid del archivo que quieres renombrar ")
@@ -572,7 +594,8 @@ class Cliente(Ice.Application):
         y hace la llama a uploadFile
         '''
         self.conectar_servicio_ficheros()
-
+        if not self.servicio_ficheros:
+            return
         fichero = input("Ruta del fichero que quieres subir ")
 
         broker = self.communicator()
