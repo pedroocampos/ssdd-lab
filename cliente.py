@@ -1,6 +1,12 @@
 #!/usr/bin/python3
 
-#pylint: disable=C0413
+'''
+Codigo que implementa la clase Cliente
+y algunos sirvientes
+'''
+
+#pylint: disable=wrong-import-position
+#pylint: disable=line-too-long
 
 import logging
 import time
@@ -13,7 +19,7 @@ import os
 import Ice
 import IceStorm
 Ice.loadSlice('IceFlix.ice')
-import IceFlix #pylint: disable=E0401
+import IceFlix #pylint: disable=import-error
 import cmd_cliente
 
 INTENTOS_RECONEXION = 3
@@ -25,7 +31,7 @@ class AnnouncementI(IceFlix.Announcement):
     '''
     Sirviente de Announcement
     '''
-    #pylint: disable=W0613
+    #pylint: disable=unused-argument
 
     def __init__(self):
         self.main = []
@@ -36,7 +42,7 @@ class AnnouncementI(IceFlix.Announcement):
         '''
         if servicio.ice_isA("::IceFlix::Main"):
             if servicio not in self.main:
-                logging.info("Se ha recibido un nuevo announce")
+                print("\nSe ha recibido un nuevo announce de un servicio Main")
                 self.main.append(IceFlix.MainPrx.uncheckedCast(servicio))
 
     def eliminar_servicios_inactivos(self, current=None):
@@ -57,9 +63,9 @@ class UserUpdateI(IceFlix.UserUpdate):
     '''
     Sirviente de UserUpdate
     '''
-    #pylint: disable=W0613
-    #pylint: disable=C0103
-    #pylint: disable=W1201
+    #pylint: disable=unused-argument
+    #pylint: disable=invalid-name
+    #pylint: disable=logging-not-lazy
 
     def newToken(self, user, token, serviceId, current=None):
         '''
@@ -89,9 +95,9 @@ class CatalogUpdateI(IceFlix.CatalogUpdate):
     '''
     Sirviente de CatalogUpdate
     '''
-    #pylint: disable=W0613
-    #pylint: disable=C0103
-    #pylint: disable=W1201
+    #pylint: disable=unused-argument
+    #pylint: disable=invalid-name
+    #pylint: disable=logging-not-lazy
 
     def renameTile(self, mediaId, newName, serviceId, current=None):
         '''
@@ -115,9 +121,9 @@ class FileAvailabilityAnnounceI(IceFlix.FileAvailabilityAnnounce):
     '''
     Sirviente de FileAvailabilityAnnounce
     '''
-    #pylint: disable=W0613
-    #pylint: disable=C0103
-    #pylint: disable=W1201
+    #pylint: disable=unused-argument
+    #pylint: disable=invalid-name
+    #pylint: disable=logging-not-lazy
 
     def announceFiles(self, mediaIds, serviceId, current=None):
         '''
@@ -135,7 +141,7 @@ class FileUploaderI(IceFlix.FileUploader):
     def __init__(self, fichero):
         self.contenido_fichero = open(fichero, "rb")
 
-    def receive(self, size, current=None): #pylint: disable=W0613
+    def receive(self, size, current=None): #pylint: disable=unused-argument
         '''
         Método que lee una cantidad de bytes del fichero
         '''
@@ -239,6 +245,12 @@ class Cliente(Ice.Application):
             hilo.start()
 
     def comprobar_servicios(self):
+        '''
+        Metodo que llama a un metodo que lanza pings
+        a todos los mains registrados y si alguno no responde
+        lo elimina de la lista de servicios activos.
+        Se ejecuta cada 5 segundos
+        '''
         self.announcement.eliminar_servicios_inactivos()
         hilo = threading.Timer(5.0, self.comprobar_servicios)
         hilo.daemon = True
@@ -336,7 +348,7 @@ class Cliente(Ice.Application):
         '''
         self.conectar_autenticador()
         if not self.servicio_autenticacion:
-            logging.error("No se ha podido conectar con el autenticador")
+            logging.error("No se ha podido conectar con ningún servicio Autenticador")
             return
         nombre_usuario = input("Usuario: ")
         contrasena = getpass.getpass("Contraseña: ")
@@ -368,6 +380,7 @@ class Cliente(Ice.Application):
         '''
         self.conectar_catalogo()
         if not self.servicio_catalogo:
+            logging.error("No se ha podido conectar con ningún servicio Catálogo")
             return
 
         tipo_busqueda = input("¿Quiere buscar por nombre o tags? [nombre/tags] ")
@@ -506,6 +519,7 @@ class Cliente(Ice.Application):
         token_admin = str(hashlib.sha256(token_admin.encode()).hexdigest())
         self.conectar_autenticador()
         if not self.servicio_autenticacion:
+            logging.error("No se ha podido conectar con ningún servicio Autenticador")
             return
         if not self.servicio_autenticacion.isAdmin(token_admin):
             logging.error("No eres administrador")
@@ -535,8 +549,8 @@ class Cliente(Ice.Application):
         Para sacar por pantalla el menú de administrador
         '''
         print("1. Añadir usuario\n2. Eliminar usuario\n3. Renombrar archivo\n4. Subir fichero\
-        \n5. Eliminar fichero\n6. Subscribirse a UserUpdates\n7. Subscribirse a CatalogUpdates\
-        \n8. Subscribirse a FileAvailabilityAnnounce\n9. Salir")
+        \n5. Eliminar fichero\n6. Suscribirse a UserUpdates\n7. Suscribirse a CatalogUpdates\
+        \n8. Suscribirse a FileAvailabilityAnnounce\n9. Salir")
         opcion = input("Selecciona una opción: ")
         if not opcion.isdigit() or int(opcion) not in range(1, 10):
             return
@@ -560,6 +574,7 @@ class Cliente(Ice.Application):
         '''
         self.conectar_autenticador()
         if not self.servicio_autenticacion:
+            logging.error("No se ha podido conectar con ningún servicio Autenticador")
             return
         nombre_usuario = input("Usuario: ")
         try:
@@ -575,6 +590,7 @@ class Cliente(Ice.Application):
         '''
         self.conectar_catalogo()
         if not self.servicio_catalogo:
+            logging.error("No se ha podido conectar con ningún servicio Catálogo")
             return
         try:
             if not self.titulo_seleccionado:
@@ -595,6 +611,7 @@ class Cliente(Ice.Application):
         '''
         self.conectar_servicio_ficheros()
         if not self.servicio_ficheros:
+            logging.error("No se ha podido conectar con ningún servicio de Ficheros")
             return
         fichero = input("Ruta del fichero que quieres subir ")
 
@@ -623,6 +640,7 @@ class Cliente(Ice.Application):
 
         self.conectar_servicio_ficheros()
         if not self.servicio_ficheros:
+            logging.error("No se ha podido conectar con ningún servicio de Ficheros")
             return
         try:
             if not self.titulo_seleccionado:
@@ -637,11 +655,10 @@ class Cliente(Ice.Application):
 
     def conectar_user_updates(self):
         '''
-        Para subscribirse a UserUpdates y ponerte a la escucha de los
+        Para suscribirse a UserUpdates y ponerte a la escucha de los
         eventos que vayan ocurriendo durante un tiempo=TIEMPO_ESCUCHA
         '''
-        logging.info("Para salir pulsa CTRL-C")
-
+        logging.info("La suscripcion a UserUpdates tiene un tiempo limitado de " + str(TIEMPO_ESCUCHA/60) + " min") #pylint: disable=logging-not-lazy
         broker = self.communicator()
 
         topic_user_update = self.obtener_topic(self.obtener_topic_manager(broker), "UserUpdates")
@@ -653,19 +670,17 @@ class Cliente(Ice.Application):
 
         tiempo = 0
         while tiempo != TIEMPO_ESCUCHA:
-            try:
-                tiempo += 1
-            except KeyboardInterrupt:
-                topic_user_update.unsubscribe(user_update_prx)
-                return
+            tiempo += 1
+            time.sleep(1)
+        topic_user_update.unsubscribe(user_update_prx)
+        logging.info("Se ha acabado la suscripción a UserUpdates")
 
     def conectar_catalog_updates(self):
         '''
-        Para subscribirse a CatalogUpdates y ponerte a la escucha de los
+        Para suscribirse a CatalogUpdates y ponerte a la escucha de los
         eventos que vayan ocurriendo durante un tiempo=TIEMPO_ESCUCHA
         '''
-        logging.info("Para salir pulsa CTRL-C")
-
+        logging.info("La suscripcion a CatalogUpdates tiene un tiempo limitado de " + str(TIEMPO_ESCUCHA/60) + " min") #pylint: disable=logging-not-lazy
         broker = self.communicator()
 
         topic_catalog_update = self.obtener_topic(self.obtener_topic_manager(broker), "CatalogUpdates")
@@ -677,19 +692,17 @@ class Cliente(Ice.Application):
 
         tiempo = 0
         while tiempo != TIEMPO_ESCUCHA:
-            try:
-                tiempo += 1
-            except KeyboardInterrupt:
-                topic_catalog_update.unsubscribe(catalog_update_prx)
-                return
+            tiempo += 1
+            time.sleep(1)
+        topic_catalog_update.unsubscribe(catalog_update_prx)
+        logging.info("Se ha acabado la suscripción a CatalogUpdates")
 
     def conectar_file_availability(self):
         '''
-        Para subscribirse a FileAvailability y ponerte a la escucha de los
+        Para suscribirse a FileAvailability y ponerte a la escucha de los
         eventos que vayan ocurriendo durante un tiempo=TIEMPO_ESCUCHA
         '''
-        logging.info("Para salir pulsa CTRL-C")
-
+        logging.info("\nLa suscripcion a FileAvailability tiene un tiempo limitado de " + str(TIEMPO_ESCUCHA/60) + " min") #pylint: disable=logging-not-lazy
         broker = self.communicator()
 
         topic_file_availability = self.obtener_topic(self.obtener_topic_manager(broker), "FileAvailabilityAnnounce")
@@ -701,13 +714,12 @@ class Cliente(Ice.Application):
 
         tiempo = 0
         while tiempo != TIEMPO_ESCUCHA:
-            try:
-                tiempo += 1
-            except KeyboardInterrupt:
-                topic_file_availability.unsubscribe(file_availability_prx)
-                return
+            tiempo += 1
+            time.sleep(1)
+        topic_file_availability.unsubscribe(file_availability_prx)
+        logging.info("Se ha acabado la suscripción a FileAvailability")
 
-    def run(self, argv):
+    def run(self, argv): #pylint: disable=unused-argument
         '''
         Definicion del metodo run de Ice.Application
         '''

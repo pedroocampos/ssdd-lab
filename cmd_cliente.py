@@ -1,5 +1,10 @@
 #!/usr/bin/python3
 
+'''
+Codigo que implementa todas las funcionalidades
+que nos ofrece la terminal del cliente
+'''
+
 #pylint: disable=W0613
 
 import cmd
@@ -33,7 +38,7 @@ class Terminal(cmd.Cmd):
         '''
         if self.cliente.token:
             logging.info("Puedes cerrar sesión con el comando <cerrar_sesion>")
-            self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado y autenticado) Cliente)> " + Fore.RESET
+            self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado y autenticado) Cliente)> " + Fore.RESET #pylint: disable=line-too-long
         elif self.conectado():
             logging.info("Recuerda que puedes autenticarte con el comando <autenticar>")
             self.prompt = Style.BRIGHT + Fore.GREEN + "<(Conectado) Cliente> " + Fore.RESET
