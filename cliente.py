@@ -24,7 +24,6 @@ import cmd_cliente
 
 INTENTOS_RECONEXION = 3
 TAM_BLOQUE = 1024
-TOPIC_MANAGER_PROXY = "IceStorm/TopicManager:tcp -p 10000"
 TIEMPO_ESCUCHA = 120
 
 class AnnouncementI(IceFlix.Announcement):
@@ -180,7 +179,7 @@ class Cliente(Ice.Application):
         while intentos != INTENTOS_RECONEXION:
             try:
                 intentos += 1
-                proxy = broker.stringToProxy(TOPIC_MANAGER_PROXY)
+                proxy = broker.propertyToProxy("IceStorm.TopicManager")
                 topic_manager = IceStorm.TopicManagerPrx.checkedCast(proxy)
             except Ice.Exception:
                 logging.error("Intentando reconectar con el TopicManager...")
@@ -236,7 +235,7 @@ class Cliente(Ice.Application):
             except Ice.Exception:
                 if not self.announcement.main:
                     logging.error("Se ha perdido la conexion con el servicio Main")
-                    os._exit(0)
+                    os._exit(os.EX_OK)
                 else:
                     self.conectar_main()
 
